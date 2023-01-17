@@ -10,11 +10,10 @@ import (
 )
 
 type Coordinator struct {
-	files             []string
-	nReduce           int
-	mapAssignments    taskTable
-	reduceAssignments taskTable
-	done              bool
+	Files             []string
+	NReduce           int
+	MapAssignments    TaskTable
+	ReduceAssignments TaskTable
 	mux               sync.Mutex
 }
 
@@ -35,7 +34,41 @@ func (c *Coordinator) server() {
 // main/mrcoordinator.go calls Done() periodically to find out
 // if the entire job has finished.
 func (c *Coordinator) Done() bool {
-	return c.mapAssignments.Done() && c.reduceAssignments.Done()
+	return c.MapAssignments.Done() && c.ReduceAssignments.Done()
+}
+
+// AssignTask assign task to worker, call from worker by rpc
+func (c *Coordinator) AssignTask(request *TaskRequest, assignment *TaskAssignment) error {
+	c.mux.Lock()
+	defer c.mux.Unlock()
+
+	finder := func(taskInfo *TaskInfo) bool {
+		// find the idle or failed task to assign
+		return taskInfo.Status == Idle || taskInfo.Status == Failed
+	}
+
+	// if any map task remain, then assign map task first
+	id, mapTask := c.MapAssignments.FindFirst(finder)
+	if mapTask != nil {
+		// assign map task to worker
+		mapTask.inProgress(request.WorkerId)
+		// fill assign values
+		assignment.Fill(id, c.NReduce, *mapTask)
+		log.Printf("Map task %d assigned to worder: %d", id, request.WorkerId)
+		return nil
+	}
+
+	// then assign reduce tasks
+	id, reduceTask := c.ReduceAssignments.FindFirst(finder)
+	if reduceTask != nil {
+		reduceTask.inProgress(request.WorkerId)
+		assignment.Fill(id, c.NReduce, *reduceTask)
+		log.Printf("Reduce task %d assigned to worder: %d", id, request.WorkerId)
+		return nil
+	}
+
+	// no task to assign
+	return nil
 }
 
 // create a Coordinator.
@@ -43,29 +76,29 @@ func (c *Coordinator) Done() bool {
 // nReduce is the number of reduce tasks to use.
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	c := Coordinator{
-		files:   files,
-		nReduce: nReduce,
+		Files:   files,
+		NReduce: nReduce,
 		// assign map tasks by files
-		mapAssignments: splitMapAssignments(files),
+		MapAssignments: splitMapAssignments(files),
 		// init reduce task reference first
 		// after map task complete, will create reduce task
-		reduceAssignments: make(taskTable),
-		done:              false,
+		ReduceAssignments: make(TaskTable),
 	}
 
 	c.server()
 	return &c
 }
 
-func splitMapAssignments(files []string) taskTable {
+func splitMapAssignments(files []string) TaskTable {
 	// simple implemention
 	// just one file one task
-	taskTable := make(taskTable)
+	taskTable := make(TaskTable)
 	idGenerator := IdInstance()
 	for _, file := range files {
-		taskTable[idGenerator.getId()] = &taskInfo{
-			filenames: []string{file},
-			status:    idle,
+		taskTable[idGenerator.getId()] = &TaskInfo{
+			Filenames: []string{file},
+			Status:    Idle,
+			Type:      Map,
 		}
 	}
 	return taskTable
