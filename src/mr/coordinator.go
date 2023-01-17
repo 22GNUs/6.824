@@ -54,7 +54,7 @@ func (c *Coordinator) AssignTask(request *TaskRequest, assignment *TaskAssignmen
 		mapTask.inProgress(request.WorkerId)
 		// fill assign values
 		assignment.Fill(id, c.NReduce, *mapTask)
-		log.Printf("Map task %d assigned to worder: %d", id, request.WorkerId)
+		log.Printf("Map task %d assigned to worder: %s", id, request.WorkerId)
 		return nil
 	}
 
@@ -63,7 +63,7 @@ func (c *Coordinator) AssignTask(request *TaskRequest, assignment *TaskAssignmen
 	if reduceTask != nil {
 		reduceTask.inProgress(request.WorkerId)
 		assignment.Fill(id, c.NReduce, *reduceTask)
-		log.Printf("Reduce task %d assigned to worder: %d", id, request.WorkerId)
+		log.Printf("Reduce task %d assigned to worder: %s", id, request.WorkerId)
 		return nil
 	}
 

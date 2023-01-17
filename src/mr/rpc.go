@@ -14,7 +14,7 @@ import (
 // Add your RPC definitions here.
 // TaskRequest define structure to request coordinator a task
 type TaskRequest struct {
-	WorkerId int
+	WorkerId string
 }
 
 type TaskAssignment struct {

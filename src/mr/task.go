@@ -21,7 +21,7 @@ const (
 // TaskInfo repensent a task assign to worker
 type TaskInfo struct {
 	// default is 0, beging in 1
-	WorkerId   int
+	WorkerId   string
 	Filenames  []string
 	Type       TaskType
 	Status     TaskStatus
@@ -30,7 +30,7 @@ type TaskInfo struct {
 
 // inProgress called when a task is assigned to a worker
 // will update self status to inProgress
-func (taskInfo *TaskInfo) inProgress(workerId int) {
+func (taskInfo *TaskInfo) inProgress(workerId string) {
 	taskInfo.WorkerId = workerId
 	taskInfo.Status = InProgress
 	taskInfo.AssignedAt = time.Now()
