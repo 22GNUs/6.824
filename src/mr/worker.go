@@ -1,14 +1,26 @@
 package mr
 
-import "fmt"
-import "log"
-import "net/rpc"
-import "hash/fnv"
+import (
+	"encoding/json"
+	"fmt"
+	"hash/fnv"
+	"io/ioutil"
+	"log"
+	"net/rpc"
+	"os"
+	"time"
+)
 
 // Map functions return a slice of KeyValue.
 type KeyValue struct {
 	Key   string
 	Value string
+}
+
+// combine tmp file and json encoder
+type intermedidateTmpOut struct {
+	tmpFile *os.File
+	encoder *json.Encoder
 }
 
 // use ihash(key) % NReduce to choose the reduce
@@ -24,9 +36,77 @@ func Worker(mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
 	// Your worker implementation here.
+	workerId := generateId()
+	for {
+		request := TaskRequest{workerId}
+		var assignment TaskAssignment
+		// if fail would existed
+		call("Coordinator.AssignTask", &request, &assignment)
+		if assignment.Empty() {
+			log.Printf("Get empty task from coordinator")
+			continue
+		}
+		log.Printf("Get task: [%d:%s] from coordinator", assignment.TaskId, assignment.TaskType)
 
-	// uncomment to send the Example RPC to the coordinator.
-	// CallExample()
+		switch assignment.TaskType {
+		case Map:
+			doMap(mapf, assignment)
+		case Reduce:
+			doReduce(reducef, assignment)
+		}
+		time.Sleep(5 * time.Second)
+	}
+}
+
+func doMap(mapf func(string, string) []KeyValue, assignment TaskAssignment) {
+	// map to list of k-v
+	tmpOuts := make(map[int]*intermedidateTmpOut)
+	for _, filename := range assignment.Filenames {
+		file, err := os.Open(filename)
+		if err != nil {
+			log.Fatalf("cannot open %v", filename)
+		}
+		content, err := ioutil.ReadAll(file)
+		if err != nil {
+			log.Fatalf("cannot read %v", filename)
+		}
+		file.Close()
+		kva := mapf(filename, string(content))
+
+		for _, kv := range kva {
+			reduceTaskId := ihash(kv.Key) % assignment.NReduce
+			tmpOut, ok := tmpOuts[reduceTaskId]
+			if !ok {
+				tmpFile, err := ioutil.TempFile("", "map-tmp-")
+				if err != nil {
+					log.Fatalln("Couldn't create tmp file")
+				}
+				// init encoder
+				encoder := json.NewEncoder(tmpFile)
+				tmpOut = &intermedidateTmpOut{tmpFile, encoder}
+				tmpOuts[reduceTaskId] = tmpOut
+			}
+			// append kv to tmp file
+			tmpOut.encoder.Encode(kv)
+		}
+		// write tmp files to os
+		for reduceIdx, tmpOut := range tmpOuts {
+			tmpFile := tmpOut.tmpFile.Name()
+			outFile := fmt.Sprintf("mr-%d-%d.txt", assignment.TaskId, reduceIdx)
+			err := os.Rename(tmpFile, outFile)
+			if err != nil {
+				log.Fatalf("Rename tmpFile: %s to %s failed", tmpFile, outFile)
+			}
+			log.Printf("Finish map task: %d, write success to file to %s", assignment.TaskId, outFile)
+		}
+
+		// Notify coordinator task done
+
+	}
+
+}
+
+func doReduce(reducef func(string, []string) string, assignment TaskAssignment) {
 
 }
 
@@ -49,4 +129,8 @@ func call(rpcname string, args interface{}, reply interface{}) bool {
 
 	fmt.Println(err)
 	return false
+}
+
+func generateId() string {
+	return fmt.Sprintf("Worder-%d", time.Now().Unix())
 }

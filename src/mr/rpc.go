@@ -28,6 +28,7 @@ func (assignment *TaskAssignment) Fill(taskId int, nReduce int, taskInfo TaskInf
 	assignment.TaskId = taskId
 	assignment.TaskType = taskInfo.Type
 	assignment.Filenames = taskInfo.Filenames
+	assignment.NReduce = nReduce
 }
 
 func (assignment TaskAssignment) Empty() bool {

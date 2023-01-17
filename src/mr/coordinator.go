@@ -34,6 +34,8 @@ func (c *Coordinator) server() {
 // main/mrcoordinator.go calls Done() periodically to find out
 // if the entire job has finished.
 func (c *Coordinator) Done() bool {
+	c.mux.Lock()
+	defer c.mux.Unlock()
 	return c.MapAssignments.Done() && c.ReduceAssignments.Done()
 }
 
