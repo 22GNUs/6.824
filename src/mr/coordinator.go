@@ -95,11 +95,13 @@ func splitMapAssignments(files []string) TaskTable {
 	taskTable := make(TaskTable)
 	idGenerator := IdInstance()
 	for _, file := range files {
-		taskTable[idGenerator.getId()] = &TaskInfo{
+		taskId := idGenerator.getId()
+		taskTable[taskId] = &TaskInfo{
 			Filenames: []string{file},
 			Status:    Idle,
 			Type:      Map,
 		}
+		log.Printf("Assigned file: %s to map task: %d", file, taskId)
 	}
 	return taskTable
 }
