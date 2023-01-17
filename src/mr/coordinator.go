@@ -1,33 +1,24 @@
 package mr
 
-import "log"
-import "net"
-import "os"
-import "net/rpc"
-import "net/http"
-
+import (
+	"log"
+	"net"
+	"net/http"
+	"net/rpc"
+	"os"
+	"sync"
+)
 
 type Coordinator struct {
-	// Your definitions here.
-
+	files             []string
+	nReduce           int
+	mapAssignments    taskTable
+	reduceAssignments taskTable
+	done              bool
+	mux               sync.Mutex
 }
 
-// Your code here -- RPC handlers for the worker to call.
-
-//
-// an example RPC handler.
-//
-// the RPC argument and reply types are defined in rpc.go.
-//
-func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
-	reply.Y = args.X + 1
-	return nil
-}
-
-
-//
 // start a thread that listens for RPCs from worker.go
-//
 func (c *Coordinator) server() {
 	rpc.Register(c)
 	rpc.HandleHTTP()
@@ -41,30 +32,41 @@ func (c *Coordinator) server() {
 	go http.Serve(l, nil)
 }
 
-//
 // main/mrcoordinator.go calls Done() periodically to find out
 // if the entire job has finished.
-//
 func (c *Coordinator) Done() bool {
-	ret := false
-
-	// Your code here.
-
-
-	return ret
+	return c.mapAssignments.Done() && c.reduceAssignments.Done()
 }
 
-//
 // create a Coordinator.
 // main/mrcoordinator.go calls this function.
 // nReduce is the number of reduce tasks to use.
-//
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
-	c := Coordinator{}
-
-	// Your code here.
-
+	c := Coordinator{
+		files:   files,
+		nReduce: nReduce,
+		// assign map tasks by files
+		mapAssignments: splitMapAssignments(files),
+		// init reduce task reference first
+		// after map task complete, will create reduce task
+		reduceAssignments: make(taskTable),
+		done:              false,
+	}
 
 	c.server()
 	return &c
+}
+
+func splitMapAssignments(files []string) taskTable {
+	// simple implemention
+	// just one file one task
+	taskTable := make(taskTable)
+	idGenerator := IdInstance()
+	for _, file := range files {
+		taskTable[idGenerator.getId()] = &taskInfo{
+			filenames: []string{file},
+			status:    idle,
+		}
+	}
+	return taskTable
 }
