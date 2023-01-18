@@ -12,9 +12,22 @@ import (
 )
 
 // Add your RPC definitions here.
+
 // TaskRequest define structure to request coordinator a task
 type TaskRequest struct {
 	WorkerId string
+}
+
+// TaskDoneNotification define structure when worker finish a task
+type TaskDoneNotification struct {
+	TaskId    int
+	TaskType  TaskType
+	Filenames []string
+}
+
+// Return when server received TaskDoneNotification
+type TaskAck struct {
+	Ok bool
 }
 
 type TaskAssignment struct {

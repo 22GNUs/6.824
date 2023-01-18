@@ -39,12 +39,57 @@ func (c *Coordinator) Done() bool {
 	return c.MapAssignments.Done() && c.ReduceAssignments.Done()
 }
 
+// Called when a worker finish his job
+func (c *Coordinator) TaskDone(notify *TaskDoneNotification, ack *TaskAck) error {
+	c.mux.Lock()
+	defer c.mux.Unlock()
+
+	finder := func(id int, _ *TaskInfo) bool {
+		// find the task by id
+		return id == notify.TaskId
+	}
+	switch notify.TaskType {
+	case Map:
+		id, taskInfo := c.MapAssignments.FindFirst(finder)
+		if taskInfo.Status != Done {
+			// collect map intermedidate files, and assign to right reduce tasks
+			for _, file := range notify.Filenames {
+				reduceTaskId := getReduceTaskId(file)
+				reduceTask, created := c.ReduceAssignments[reduceTaskId]
+				if !created {
+					reduceTask = &TaskInfo{
+						Type:   Reduce,
+						Status: Idle,
+					}
+					c.ReduceAssignments[reduceTaskId] = reduceTask
+				}
+				reduceTask.Filenames = append(reduceTask.Filenames, file)
+			}
+			taskInfo.Status = Done
+			log.Printf("Map task: %d is done", id)
+		}
+	case Reduce:
+		id, taskInfo := c.ReduceAssignments.FindFirst(finder)
+		// simply mark reduce task as done
+		if taskInfo.Status != Done {
+			taskInfo.Status = Done
+			log.Printf("Reduce task: %d is done", id)
+		}
+	}
+	ack.Ok = true
+	return nil
+}
+
+func getReduceTaskId(file string) int {
+	return int(file[len(file)-1])
+}
+
 // AssignTask assign task to worker, call from worker by rpc
 func (c *Coordinator) AssignTask(request *TaskRequest, assignment *TaskAssignment) error {
 	c.mux.Lock()
 	defer c.mux.Unlock()
 
-	finder := func(taskInfo *TaskInfo) bool {
+	finder := func(_ int, taskInfo *TaskInfo) bool {
 		// find the idle or failed task to assign
 		return taskInfo.Status == Idle || taskInfo.Status == Failed
 	}
@@ -56,7 +101,7 @@ func (c *Coordinator) AssignTask(request *TaskRequest, assignment *TaskAssignmen
 		mapTask.inProgress(request.WorkerId)
 		// fill assign values
 		assignment.Fill(id, c.NReduce, *mapTask)
-		log.Printf("Map task %d assigned to worder: %s", id, request.WorkerId)
+		log.Printf("Map task %d assigned to worker: %s", id, request.WorkerId)
 		return nil
 	}
 
@@ -65,7 +110,7 @@ func (c *Coordinator) AssignTask(request *TaskRequest, assignment *TaskAssignmen
 	if reduceTask != nil {
 		reduceTask.inProgress(request.WorkerId)
 		assignment.Fill(id, c.NReduce, *reduceTask)
-		log.Printf("Reduce task %d assigned to worder: %s", id, request.WorkerId)
+		log.Printf("Reduce task %d assigned to worker: %s", id, request.WorkerId)
 		return nil
 	}
 

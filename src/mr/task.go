@@ -50,9 +50,9 @@ func (taskTable TaskTable) Done() bool {
 }
 
 // FindFirst find the first task that matches the input predicate
-func (taskTable TaskTable) FindFirst(predicate func(taskInfo *TaskInfo) bool) (int, *TaskInfo) {
+func (taskTable TaskTable) FindFirst(predicate func(id int, taskInfo *TaskInfo) bool) (int, *TaskInfo) {
 	for id, task := range taskTable {
-		if predicate(task) {
+		if predicate(id, task) {
 			return id, task
 		}
 	}

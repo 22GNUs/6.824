@@ -90,18 +90,26 @@ func doMap(mapf func(string, string) []KeyValue, assignment TaskAssignment) {
 			tmpOut.encoder.Encode(kv)
 		}
 		// write tmp files to os
+		finalOutFiles := []string{}
 		for reduceIdx, tmpOut := range tmpOuts {
 			tmpFile := tmpOut.tmpFile.Name()
-			outFile := fmt.Sprintf("mr-%d-%d.txt", assignment.TaskId, reduceIdx)
+			outFile := fmt.Sprintf("mr-%d-%d", assignment.TaskId, reduceIdx)
 			err := os.Rename(tmpFile, outFile)
 			if err != nil {
 				log.Fatalf("Rename tmpFile: %s to %s failed", tmpFile, outFile)
 			}
+			finalOutFiles = append(finalOutFiles, outFile)
 			log.Printf("Finish map task: %d, write success to file to %s", assignment.TaskId, outFile)
 		}
 
-		// Notify coordinator task done
-
+		notify := TaskDoneNotification{assignment.TaskId, assignment.TaskType, finalOutFiles}
+		var ack TaskAck
+		call("Coordinator.TaskDone", &notify, &ack)
+		if ack.Ok {
+			log.Printf("Map task: %d notify coordinator success", assignment.TaskId)
+		} else {
+			log.Printf("Map task: %d notify coordinator failed", assignment.TaskId)
+		}
 	}
 
 }
@@ -132,5 +140,5 @@ func call(rpcname string, args interface{}, reply interface{}) bool {
 }
 
 func generateId() string {
-	return fmt.Sprintf("Worder-%d", time.Now().Unix())
+	return fmt.Sprintf("Worker-%d", time.Now().Unix())
 }
