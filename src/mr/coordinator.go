@@ -81,7 +81,8 @@ func (c *Coordinator) TaskDone(notify *TaskDoneNotification, ack *TaskAck) error
 }
 
 func getReduceTaskId(file string) int {
-	return int(file[len(file)-1])
+	// get last char as int
+	return int(file[len(file)-1] - '0')
 }
 
 // AssignTask assign task to worker, call from worker by rpc

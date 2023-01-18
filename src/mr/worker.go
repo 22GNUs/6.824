@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/rpc"
 	"os"
+	"sort"
 	"time"
 )
 
@@ -22,6 +23,14 @@ type intermedidateTmpOut struct {
 	tmpFile *os.File
 	encoder *json.Encoder
 }
+
+// for sorting by key.
+type ByKey []KeyValue
+
+// for sorting by key.
+func (a ByKey) Len() int           { return len(a) }
+func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
 
 // use ihash(key) % NReduce to choose the reduce
 // task number for each KeyValue emitted by Map.
@@ -42,19 +51,17 @@ func Worker(mapf func(string, string) []KeyValue,
 		var assignment TaskAssignment
 		// if fail would existed
 		call("Coordinator.AssignTask", &request, &assignment)
-		if assignment.Empty() {
-			log.Printf("Get empty task from coordinator")
-			continue
+		if !assignment.Empty() {
+			log.Printf("Get task: [%d:%s] from coordinator", assignment.TaskId, assignment.TaskType)
+			switch assignment.TaskType {
+			case Map:
+				doMap(mapf, assignment)
+			case Reduce:
+				doReduce(reducef, assignment)
+			}
+		} else {
+			log.Print("Get empty task from coordinator")
 		}
-		log.Printf("Get task: [%d:%s] from coordinator", assignment.TaskId, assignment.TaskType)
-
-		switch assignment.TaskType {
-		case Map:
-			doMap(mapf, assignment)
-		case Reduce:
-			doReduce(reducef, assignment)
-		}
-		time.Sleep(5 * time.Second)
 	}
 }
 
@@ -99,7 +106,7 @@ func doMap(mapf func(string, string) []KeyValue, assignment TaskAssignment) {
 				log.Fatalf("Rename tmpFile: %s to %s failed", tmpFile, outFile)
 			}
 			finalOutFiles = append(finalOutFiles, outFile)
-			log.Printf("Finish map task: %d, write success to file to %s", assignment.TaskId, outFile)
+			log.Printf("Map task: %d, presistent intermediate file to %s", assignment.TaskId, outFile)
 		}
 
 		notify := TaskDoneNotification{assignment.TaskId, assignment.TaskType, finalOutFiles}
@@ -115,6 +122,59 @@ func doMap(mapf func(string, string) []KeyValue, assignment TaskAssignment) {
 }
 
 func doReduce(reducef func(string, []string) string, assignment TaskAssignment) {
+	intermediate := []KeyValue{}
+	for _, filename := range assignment.Filenames {
+		file, err := os.Open(filename)
+		if err != nil {
+			log.Fatalf("cannot open %v", filename)
+		}
+		dec := json.NewDecoder(file)
+		for {
+			var kv KeyValue
+			if err := dec.Decode(&kv); err != nil {
+				break
+			}
+			intermediate = append(intermediate, kv)
+		}
+	}
+
+	sort.Sort(ByKey(intermediate))
+	tmpFile, _ := ioutil.TempFile("", "reduce-tmp-")
+	defer os.Remove(tmpFile.Name())
+	//
+	// call Reduce on each distinct key in intermediate[],
+	// and print the result to tmpFile.
+	//
+	i := 0
+	for i < len(intermediate) {
+		j := i + 1
+		for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
+			j++
+		}
+		values := []string{}
+		for k := i; k < j; k++ {
+			values = append(values, intermediate[k].Value)
+		}
+		output := reducef(intermediate[i].Key, values)
+
+		// this is the correct format for each line of Reduce output.
+		fmt.Fprintf(tmpFile, "%v %v\n", intermediate[i].Key, output)
+		i = j
+	}
+	tmpFileName := tmpFile.Name()
+	outFileName := fmt.Sprintf("mr-out-%d", assignment.TaskId)
+	if err := os.Rename(tmpFileName, outFileName); err != nil {
+		log.Fatalf("Rename tmpFile: %s to %s failed", tmpFileName, outFileName)
+	}
+	log.Printf("Reduce task: %d presistent file: %s success", assignment.TaskId, outFileName)
+	notify := TaskDoneNotification{assignment.TaskId, assignment.TaskType, []string{outFileName}}
+	var ack TaskAck
+	call("Coordinator.TaskDone", &notify, &ack)
+	if ack.Ok {
+		log.Printf("Reduce task: %d notify coordinator success", assignment.TaskId)
+	} else {
+		log.Printf("Reduce task: %d notify coordinator failed", assignment.TaskId)
+	}
 
 }
 
