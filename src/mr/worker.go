@@ -61,6 +61,7 @@ func Worker(mapf func(string, string) []KeyValue,
 			}
 		} else {
 			log.Print("Get empty task from coordinator")
+			time.Sleep(2 * time.Second)
 		}
 	}
 }
@@ -161,6 +162,8 @@ func doReduce(reducef func(string, []string) string, assignment TaskAssignment) 
 		fmt.Fprintf(tmpFile, "%v %v\n", intermediate[i].Key, output)
 		i = j
 	}
+	tmpFile.Close()
+
 	tmpFileName := tmpFile.Name()
 	outFileName := fmt.Sprintf("mr-out-%d", assignment.TaskId)
 	if err := os.Rename(tmpFileName, outFileName); err != nil {
@@ -200,5 +203,5 @@ func call(rpcname string, args interface{}, reply interface{}) bool {
 }
 
 func generateId() string {
-	return fmt.Sprintf("Worker-%d", time.Now().Unix())
+	return fmt.Sprintf("Worker-%d", time.Now().UnixNano())
 }

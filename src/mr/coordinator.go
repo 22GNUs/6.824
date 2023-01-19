@@ -1,13 +1,17 @@
 package mr
 
 import (
+	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"net/rpc"
 	"os"
 	"sync"
+	"time"
 )
+
+const Timeout time.Duration = time.Second * 10
 
 type Coordinator struct {
 	Files             []string
@@ -15,6 +19,20 @@ type Coordinator struct {
 	MapAssignments    TaskTable
 	ReduceAssignments TaskTable
 	mux               sync.Mutex
+	done              bool
+	ch                chan bool
+}
+
+func (c *Coordinator) printStatus() {
+	printer := func(name TaskType, taskTable TaskTable) {
+		fmt.Printf("==== Current status of %s:\n", name)
+		for id, task := range taskTable {
+			fmt.Printf("==== Task[%d,%s] is in %s\n", id, task.Type, task.Status)
+		}
+		fmt.Printf("==========================\n")
+	}
+	printer(Map, c.MapAssignments)
+	printer(Reduce, c.ReduceAssignments)
 }
 
 // start a thread that listens for RPCs from worker.go
@@ -29,14 +47,26 @@ func (c *Coordinator) server() {
 		log.Fatal("listen error:", e)
 	}
 	go http.Serve(l, nil)
+	go c.Listen()
 }
 
 // main/mrcoordinator.go calls Done() periodically to find out
 // if the entire job has finished.
 func (c *Coordinator) Done() bool {
 	c.mux.Lock()
-	defer c.mux.Unlock()
-	return c.MapAssignments.Done() && c.ReduceAssignments.Done()
+	done := c.MapAssignments.Done() && c.ReduceAssignments.Done()
+	c.mux.Unlock()
+	if done {
+		c.mux.Lock()
+		c.done = true
+		c.mux.Unlock()
+
+		log.Print("Waiting for listener signal...")
+		<-c.ch
+		log.Print("All tasks done, shutting down...")
+		defer close(c.ch)
+	}
+	return done
 }
 
 // Called when a worker finish his job
@@ -80,11 +110,6 @@ func (c *Coordinator) TaskDone(notify *TaskDoneNotification, ack *TaskAck) error
 	return nil
 }
 
-func getReduceTaskId(file string) int {
-	// get last char as int
-	return int(file[len(file)-1] - '0')
-}
-
 // AssignTask assign task to worker, call from worker by rpc
 func (c *Coordinator) AssignTask(request *TaskRequest, assignment *TaskAssignment) error {
 	c.mux.Lock()
@@ -106,6 +131,12 @@ func (c *Coordinator) AssignTask(request *TaskRequest, assignment *TaskAssignmen
 		return nil
 	}
 
+	if !c.MapAssignments.Done() {
+		// this check is important, otherwise it may lead to problems with concurrent scenarios
+		log.Print("There still non finish map tasks, wait unitl all map tasks finish")
+		return nil
+	}
+
 	// then assign reduce tasks
 	id, reduceTask := c.ReduceAssignments.FindFirst(finder)
 	if reduceTask != nil {
@@ -117,6 +148,42 @@ func (c *Coordinator) AssignTask(request *TaskRequest, assignment *TaskAssignmen
 
 	// no task to assign
 	return nil
+}
+
+func (c *Coordinator) Listen() {
+	done := false
+	for !done {
+		// check pre 2 seconds
+		time.Sleep(2 * time.Second)
+		if !c.mux.TryLock() {
+			log.Printf("Try get lock faild, wait for another time")
+			continue
+		}
+		log.Println("Checking timeouted tasks...")
+		finder := func(_ int, taskInfo *TaskInfo) bool {
+			now := time.Now()
+			return taskInfo.Status == InProgress && taskInfo.AssignedAt.Add(Timeout).Before(now)
+		}
+
+		markTimeoutFailed := func(assignments TaskTable) {
+			if tasks := assignments.Filter(finder); tasks != nil {
+				for id, task := range tasks {
+					log.Printf("Task: [%d,%s] is timout, setting it to failed", id, task.taskInfo.Type)
+					task.taskInfo.Status = Failed
+				}
+			}
+		}
+
+		// mark timeouted tasks
+		markTimeoutFailed(c.MapAssignments)
+		markTimeoutFailed(c.ReduceAssignments)
+		done = c.done
+
+		c.printStatus()
+		c.mux.Unlock()
+	}
+	log.Print("Find coordinator done, send signal to channel")
+	c.ch <- true
 }
 
 // create a Coordinator.
@@ -131,10 +198,17 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 		// init reduce task reference first
 		// after map task complete, will create reduce task
 		ReduceAssignments: make(TaskTable),
+		done:              false,
+		ch:                make(chan bool, 1),
 	}
 
 	c.server()
 	return &c
+}
+
+func getReduceTaskId(file string) int {
+	// get last char as int
+	return int(file[len(file)-1] - '0')
 }
 
 func splitMapAssignments(files []string) TaskTable {

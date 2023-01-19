@@ -1,6 +1,8 @@
 package mr
 
-import "time"
+import (
+	"time"
+)
 
 type TaskStatus string
 
@@ -47,6 +49,25 @@ func (taskTable TaskTable) Done() bool {
 		}
 	}
 	return true
+}
+
+func (taskTable TaskTable) Filter(predicate func(id int, taskInfo *TaskInfo) bool) []struct {
+	id       int
+	taskInfo *TaskInfo
+} {
+	var filtered []struct {
+		id       int
+		taskInfo *TaskInfo
+	}
+	for id, task := range taskTable {
+		if predicate(id, task) {
+			filtered = append(filtered, struct {
+				id       int
+				taskInfo *TaskInfo
+			}{id: id, taskInfo: task})
+		}
+	}
+	return filtered
 }
 
 // FindFirst find the first task that matches the input predicate
